@@ -1,0 +1,9 @@
+{
+  "name": "JFLEG test",
+  "n_sentences": 747,
+  "references": 4,
+  "source": "Hugging Face jhu-clsp/jfleg (test split; one blank trailing row dropped)",
+  "citation": "Napoles, Sakaguchi, Tetreault 2017, JFLEG: A Fluency Corpus and Benchmark for GEC (EACL)",
+  "licence": "CC BY-NC-SA 4.0",
+  "role": "TEST (no tuning)"
+}

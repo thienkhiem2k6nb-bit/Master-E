@@ -1,0 +1,10 @@
+{
+  "name": "BEA-2019 W&I+LOCNESS dev (ABCN.dev.gold.bea19.m2)",
+  "n_total": 4384,
+  "n_subset": 500,
+  "subset_seed": 42,
+  "source": "https://www.cl.cam.ac.uk/research/nl/bea2019st/ (wi+locness_v2.1.bea19.tar.gz)",
+  "citation": "Bryant et al. 2019, The BEA-2019 Shared Task on GEC; Yannakoudakis et al. 2018 (W&I); Granger 1998 (LOCNESS)",
+  "licence": "research use only, see corpus licence",
+  "role": "DEV (hyper-parameter selection only)"
+}

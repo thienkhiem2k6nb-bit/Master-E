@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>N-best Edit Voting &amp; Filtering — CoEdIT</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f9; --surface: #ffffff; --ink: #191919; --ink-2: #666666;
+    --grid: #e7e7e7; --axis: #c2c2c2; --ring: rgba(11,11,11,0.10);
+    --s1: #257de0; --s2: #f47230; --ref: #666666;
+    --good: #006c10; --bad: #dc3c3d; --warn-bg: #fff4d6; --warn-ink: #7a5300;
+    --ins-bg: #dff3e3; --ins-ink: #0b5d1e; --del-bg: #fde2e2; --del-ink: #9b1c1c;
+    --accent-wash: rgba(37,125,224,0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page: #0b0b0b; --surface: #191919; --ink: #efefef; --ink-2: #9c9c9c;
+      --grid: #303030; --axis: #474747; --ring: rgba(255,255,255,0.10);
+      --s1: #338ced; --s2: #e76624; --ref: #9c9c9c;
+      --good: #53c556; --bad: #eb6263; --warn-bg: #3a2e10; --warn-ink: #f3c969;
+      --ins-bg: #143d1e; --ins-ink: #8fe0a1; --del-bg: #4a1b1b; --del-ink: #f4a3a3;
+      --accent-wash: rgba(51,140,237,0.14);
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink);
+         font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1200px; margin: 0 auto; padding: 24px 20px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 0 0 2px; }
+  .sub { color: var(--ink-2); margin: 0 0 20px; max-width: 80ch; }
+  .card { background: var(--surface); border: 1px solid var(--ring); border-radius: 10px; padding: 16px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 16px 24px; align-items: end; margin-bottom: 16px; }
+  .ctl { display: flex; flex-direction: column; gap: 4px; }
+  .ctl > span { font-size: 12px; color: var(--ink-2); }
+  select, input[type=number], input[type=search] {
+    font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--axis);
+    border-radius: 6px; padding: 5px 8px; }
+  .seg { display: inline-flex; border: 1px solid var(--axis); border-radius: 6px; overflow: hidden; }
+  .seg button { font: inherit; border: 0; background: transparent; color: var(--ink); padding: 5px 12px; cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--axis); }
+  .seg button[aria-pressed=true] { background: var(--s1); color: #fff; }
+  .tau { display: flex; align-items: center; gap: 8px; }
+  .tau input[type=range] { width: 180px; accent-color: var(--s1); }
+  .tau output { font-variant-numeric: tabular-nums; min-width: 3ch; font-weight: 600; }
+  button.btn { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--axis);
+               border-radius: 6px; padding: 5px 12px; cursor: pointer; }
+  button.btn:hover { background: var(--accent-wash); }
+  [disabled] { opacity: .45; cursor: not-allowed; }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .tile .lbl { font-size: 12px; color: var(--ink-2); }
+  .tile .val { font-size: 26px; font-weight: 600; margin-top: 2px; }
+  .tile .note { font-size: 12px; color: var(--ink-2); margin-top: 2px; }
+  .up { color: var(--good); } .down { color: var(--bad); }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 13px; font-weight: 600; margin-top: 6px; }
+  .badge.ok { background: var(--ins-bg); color: var(--ins-ink); }
+  .badge.bad { background: var(--del-bg); color: var(--del-ink); }
+  .badge.warn { background: var(--warn-bg); color: var(--warn-ink); }
+  .badge.none { background: var(--grid); color: var(--ink-2); }
+
+  .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .chart-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .chart-sub { font-size: 12px; color: var(--ink-2); margin: 0 0 8px; }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--ink-2); flex-wrap: wrap; margin-bottom: 4px; }
+  .legend i { display: inline-block; width: 14px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 5px; }
+  .legend i.dash { border-top-style: dashed; }
+  .plot { position: relative; }
+  .plot svg { width: 100%; height: auto; display: block; overflow: visible; }
+  .plot text { fill: var(--ink-2); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .plot .lbl-direct { font-size: 11px; fill: var(--ink); }
+  .tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--ring);
+         box-shadow: 0 4px 16px rgba(0,0,0,.12); border-radius: 8px; padding: 8px 10px; font-size: 12px;
+         white-space: nowrap; display: none; z-index: 5; }
+  .tip b { font-variant-numeric: tabular-nums; }
+  .tip .sw { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .empty { color: var(--ink-2); font-size: 13px; padding: 40px 0; text-align: center; }
+  details.tbl summary { cursor: pointer; font-size: 12px; color: var(--ink-2); margin-top: 6px; }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  th { color: var(--ink-2); font-weight: 600; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  .browser-head { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .browser-head .left { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .sent { border-top: 1px solid var(--grid); padding: 10px 2px; }
+  .sent:first-child { border-top: 0; }
+  .sent .row { display: flex; gap: 10px; cursor: pointer; }
+  .sent .idx { color: var(--ink-2); font-variant-numeric: tabular-nums; min-width: 4ch; text-align: right; }
+  .sent .txt { flex: 1; word-break: break-word; }
+  .sent .meta { color: var(--ink-2); font-size: 12px; white-space: nowrap; }
+  ins { background: var(--ins-bg); color: var(--ins-ink); text-decoration: none; border-radius: 3px; padding: 0 2px; }
+  del { background: var(--del-bg); color: var(--del-ink); border-radius: 3px; padding: 0 2px; }
+  .detail { margin: 10px 0 4px 4.5ch; display: grid; gap: 10px; }
+  .detail h3 { font-size: 12px; color: var(--ink-2); margin: 0 0 4px; font-weight: 600; }
+  .bar { display: inline-block; height: 8px; background: var(--s1); border-radius: 0 4px 4px 0; vertical-align: middle; margin-right: 6px; }
+  .st-kept { color: var(--good); font-weight: 600; } .st-other { color: var(--ink-2); }
+  .pager { display: flex; gap: 8px; align-items: center; justify-content: center; margin-top: 12px; }
+  .loading { padding: 60px 0; text-align: center; color: var(--ink-2); }
+  footer { color: var(--ink-2); font-size: 12px; margin-top: 24px; }
+  code { font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>N-best Edit Voting &amp; Confidence-based Filtering</h1>
+  <p class="sub">Hậu xử lý 4 beam của CoEdIT (<code>grammarly/coedit-large</code>) ngay trong trình duyệt. Edit của từng beam đã được
+    căn chỉnh sẵn bằng spaCy và Python (<code>web/build_data.py</code>); trang này tính trọng số, support, ngưỡng τ, giải quyết chồng lấn
+    và áp edit, cho ra kết quả giống hệt <code>experiments/run_voting_filtering.py</code>.</p>
+
+  <section class="card controls" aria-label="Cấu hình">
+    <label class="ctl"><span>Bộ dữ liệu</span>
+      <select id="set">
+        <option value="conll14">CoNLL-2014 (1312 câu)</option>
+        <option value="jfleg">JFLEG (747 câu)</option>
+        <option value="bea19dev">BEA-19 dev (500 câu)</option>
+      </select></label>
+    <div class="ctl"><span>Chế độ</span>
+      <div class="seg" id="mode" role="group">
+        <button data-v="vote" aria-pressed="true" title="Mọi edit do bất kỳ beam nào đề xuất đều là ứng viên">Voting</button>
+        <button data-v="filter" aria-pressed="false" title="Chỉ edit của beam 1 là ứng viên; các beam khác có thể phủ quyết">Filtering</button>
+        <button data-v="top1" aria-pressed="false" title="Baseline: beam tốt nhất">Top-1</button>
+      </div></div>
+    <label class="ctl"><span>Trọng số beam</span>
+      <select id="wmode"><option value="softmax">softmax(z / T)</option><option value="uniform">đều nhau (1/N)</option></select></label>
+    <label class="ctl"><span>Nhiệt độ T</span>
+      <select id="temp">
+        <option>0.05</option><option selected>0.1</option><option>0.2</option><option>0.3</option>
+        <option>0.5</option><option>1</option><option>2</option><option>5</option>
+      </select></label>
+    <div class="ctl"><span>Ngưỡng τ (support ≥ τ)</span>
+      <div class="tau"><input id="tau" type="range" min="0" max="1" step="0.05" value="0.5"><output id="tauOut">0.5</output></div></div>
+    <label class="ctl"><span>Thước đo (điểm lịch sử)</span><select id="metric"></select></label>
+    <div class="ctl"><span>&nbsp;</span><button class="btn" id="download">Tải output .txt</button></div>
+  </section>
+
+  <div id="app"><div class="loading">Đang tải dữ liệu…</div></div>
+
+  <footer>
+    Điểm số là <b>kết quả lịch sử</b> từ <code>results/scores/</code> (scorer chính thức không đi kèm), chỉ hiện cho cấu hình đã từng được chấm.
+    Số câu bị sửa được tính trực tiếp. Huy hiệu kiểm chứng so hash output của trang với file gốc trong <code>results/outputs/</code>.
+  </footer>
+</main>
+
+<script src="voting.js"></script>
+<script>
+"use strict";
+const V = window.NBestVoting;
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmt = (x, d = 2) => (x == null || Number.isNaN(x) ? "—" : x.toFixed(d));
+
+const METRICS = {
+  errant: { label: "ERRANT F0.5", get: (s) => s.errant_span && s.errant_span["f0.5"],
+            pr: (s) => s.errant_span && [s.errant_span.precision, s.errant_span.recall] },
+  m2:     { label: "M2 F0.5", get: (s) => s.m2scorer && s.m2scorer["f0.5"],
+            pr: (s) => s.m2scorer && [s.m2scorer.precision, s.m2scorer.recall] },
+  gleu:   { label: "GLEU", get: (s) => s.gleu && s.gleu.gleu, pr: () => null },
+};
+const MODE_NAME = { vote: "Voting", filter: "Filtering", top1: "Top-1" };
+const TAU_GRID = Array.from({ length: 21 }, (_, i) => Math.round(i * 5) / 100);
+const PAGE = 25;
+
+const state = { set: "conll14", mode: "vote", weightMode: "softmax", temperature: 0.1, tau: 0.5,
+                metric: "m2", page: 0, onlyChanged: false, query: "", open: new Set() };
+const prepCache = {};   // set -> weightKey -> prepared dataset (support per edit; reused for every tau)
+
+/* ---------------------------------------------------------------- data loading (works on file://) */
+function loadSet(name) {
+  if (window.NBEST_DATA && window.NBEST_DATA[name]) return Promise.resolve(window.NBEST_DATA[name]);
+  return new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = `data/${name}.js`;
+    s.onload = () => resolve(window.NBEST_DATA[name]);
+    s.onerror = () => reject(new Error(`Không tải được data/${name}.js — hãy chạy: .venv/bin/python web/build_data.py`));
+    document.head.appendChild(s);
+  });
+}
+const weightKey = (wm, T) => (wm === "uniform" ? "unif" : "soft" + T);
+function prepared(D, wm, T) {
+  const c = (prepCache[D.name] ||= {});
+  return (c[weightKey(wm, T)] ||= V.prepareDataset(D.sentences, T, wm));
+}
+const srcText = (s) => s.src.join(" ");
+
+/* ---------------------------------------------------------------- historical scores */
+function parseScoreKey(k) {
+  if (k === "coedit__top1") return { mode: "top1" };
+  const m = k.match(/^coedit__(vote|filter)_t([0-9.]+)_(soft([0-9.]+)|unif)$/);
+  return m && { mode: m[1], tau: +m[2], wk: m[3] === "unif" ? "unif" : "soft" + +m[4] };
+}
+function scoreSeries(D, metric, wk) {
+  const out = { vote: [], filter: [], top1: null };
+  for (const [k, s] of Object.entries(D.scores || {})) {
+    const p = parseScoreKey(k), v = METRICS[metric].get(s);
+    if (!p || v == null) continue;
+    if (p.mode === "top1") out.top1 = v * 100;
+    else if (p.wk === wk) out[p.mode].push([p.tau, v * 100]);
+  }
+  out.vote.sort((a, b) => a[0] - b[0]); out.filter.sort((a, b) => a[0] - b[0]);
+  return out;
+}
+
+/* ---------------------------------------------------------------- line chart (SVG, hover crosshair) */
+function lineChart(el, { series, ref, xDomain, xTicks, yFmt, xFmt, markerX, xLabel }) {
+  const W = 560, H = 250, m = { l: 44, r: 92, t: 10, b: 34 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const ys = series.flatMap((s) => s.points.map((p) => p[1])).concat(ref ? [ref.y] : []);
+  if (!ys.length) { el.innerHTML = `<div class="empty">Không có dữ liệu cho lựa chọn này.</div>`; return; }
+  let lo = Math.min(...ys), hi = Math.max(...ys);
+  const pad = (hi - lo || Math.abs(hi) || 1) * 0.12; lo -= pad; hi += pad;
+  const step = niceStep((hi - lo) / 4); lo = Math.floor(lo / step) * step; hi = Math.ceil(hi / step) * step;
+  const x = (v) => m.l + ((v - xDomain[0]) / (xDomain[1] - xDomain[0])) * iw;
+  const y = (v) => m.t + ih - ((v - lo) / (hi - lo)) * ih;
+  let g = "";
+  for (let v = lo; v <= hi + step / 2; v += step) {
+    g += `<line x1="${m.l}" x2="${m.l + iw}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/>`;
+    g += `<text x="${m.l - 6}" y="${y(v) + 4}" text-anchor="end">${yFmt(v)}</text>`;
+  }
+  for (const t of xTicks) g += `<text x="${x(t)}" y="${m.t + ih + 16}" text-anchor="middle">${xFmt(t)}</text>`;
+  g += `<line x1="${m.l}" x2="${m.l + iw}" y1="${m.t + ih}" y2="${m.t + ih}" stroke="var(--axis)"/>`;
+  g += `<text x="${m.l + iw / 2}" y="${H - 2}" text-anchor="middle">${xLabel}</text>`;
+  if (markerX != null) g += `<line x1="${x(markerX)}" x2="${x(markerX)}" y1="${m.t}" y2="${m.t + ih}" stroke="var(--axis)" stroke-dasharray="2 3"/>`;
+  if (ref) {
+    g += `<line x1="${m.l}" x2="${m.l + iw}" y1="${y(ref.y)}" y2="${y(ref.y)}" stroke="var(--ref)" stroke-width="1.5" stroke-dasharray="5 4"/>`;
+    g += `<text class="lbl-direct" x="${m.l + iw + 6}" y="${y(ref.y) + 4}">${ref.name}</text>`;
+  }
+  const ends = [];
+  for (const s of series) {
+    if (!s.points.length) continue;
+    const d = s.points.map((p, i) => `${i ? "L" : "M"}${x(p[0])},${y(p[1])}`).join("");
+    g += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    if (s.points.length <= 13) for (const p of s.points)
+      g += `<circle cx="${x(p[0])}" cy="${y(p[1])}" r="4" fill="${s.color}" stroke="var(--surface)" stroke-width="2"/>`;
+    const last = s.points[s.points.length - 1];
+    ends.push({ y: y(last[1]), name: s.name });
+  }
+  ends.sort((a, b) => a.y - b.y);                      // nudge direct labels apart
+  for (let i = 1; i < ends.length; i++) if (ends[i].y - ends[i - 1].y < 13) ends[i].y = ends[i - 1].y + 13;
+  for (const e of ends) g += `<text class="lbl-direct" x="${m.l + iw + 6}" y="${e.y + 4}">${e.name}</text>`;
+  g += `<line class="xh" x1="0" x2="0" y1="${m.t}" y2="${m.t + ih}" stroke="var(--ink-2)" visibility="hidden"/>`;
+  g += `<rect class="hit" x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent"/>`;
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img">${g}</svg><div class="tip"></div>`;
+
+  const svg = el.querySelector("svg"), tip = el.querySelector(".tip"), xh = el.querySelector(".xh");
+  const xs = [...new Set(series.flatMap((s) => s.points.map((p) => p[0])))].sort((a, b) => a - b);
+  svg.querySelector(".hit").addEventListener("mousemove", (ev) => {
+    const r = svg.getBoundingClientRect(), px = ((ev.clientX - r.left) / r.width) * W;
+    let best = xs[0];
+    for (const v of xs) if (Math.abs(x(v) - px) < Math.abs(x(best) - px)) best = v;
+    xh.setAttribute("x1", x(best)); xh.setAttribute("x2", x(best)); xh.setAttribute("visibility", "visible");
+    let rows = `<div style="margin-bottom:4px">${xLabel} = <b>${xFmt(best)}</b></div>`;
+    for (const s of series) {
+      const p = s.points.find((q) => q[0] === best);
+      if (p) rows += `<div><span class="sw" style="background:${s.color}"></span>${s.name}: <b>${yFmt(p[1], true)}</b>${s.extra ? s.extra(best) : ""}</div>`;
+    }
+    if (ref) rows += `<div><span class="sw" style="background:var(--ref)"></span>${ref.name}: <b>${yFmt(ref.y, true)}</b></div>`;
+    tip.innerHTML = rows; tip.style.display = "block";
+    const left = (x(best) / W) * r.width;
+    tip.style.left = Math.min(left + 12, r.width - tip.offsetWidth) + "px"; tip.style.top = "8px";
+  });
+  svg.querySelector(".hit").addEventListener("mouseleave", () => { tip.style.display = "none"; xh.setAttribute("visibility", "hidden"); });
+}
+function niceStep(raw) {
+  const p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p;
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p;
+}
+function dataTable(cols, rows) {
+  return `<details class="tbl"><summary>Xem dạng bảng</summary><table><thead><tr>${cols.map((c, i) =>
+    `<th class="${i ? "num" : ""}">${c}</th>`).join("")}</tr></thead><tbody>${rows.map((r) =>
+    `<tr>${r.map((c, i) => `<td class="${i ? "num" : ""}">${c}</td>`).join("")}</tr>`).join("")}</tbody></table></details>`;
+}
+
+/* ---------------------------------------------------------------- sentence rendering */
+function renderDiff(src, edits) {
+  const out = []; let i = 0;
+  for (const e of [...edits].sort((a, b) => a.start - b.start || a.end - b.end)) {
+    if (e.start > i) out.push(esc(src.slice(i, e.start).join(" ")));
+    const tip = e.support != null ? ` title="support = ${e.support.toFixed(3)}"` : "";
+    if (e.orig.length) out.push(`<del${tip}>${esc(e.orig.join(" "))}</del>`);
+    if (e.cor.length) out.push(`<ins${tip}>${esc(e.cor.join(" "))}</ins>`);
+    i = Math.max(i, e.end);
+  }
+  if (i < src.length) out.push(esc(src.slice(i).join(" ")));
+  return out.join(" ");
+}
+function top1Edits(s) {
+  return s.beams[0][1].map(([start, end, cor]) => ({ start, end, cor, orig: s.src.slice(start, end), support: null }));
+}
+function sentenceDetail(D, idx, res) {
+  const s = D.sentences[idx];
+  const prep = res.kept ? res.prep : V.prepareSentence(s, state.temperature, state.weightMode);
+  const keptKeys = new Set((res.kept || []).map((e) => e.key));
+  const beamRows = s.beams.map((b, k) => [`${k + 1}`, fmt(s.scores[k], 4), fmt(prep.weights[k], 3), esc(b[0])]);
+  const candRows = prep.candidates.map((c) => {
+    let st;
+    if (state.mode === "top1") st = c.inTop1 ? `<span class="st-kept">trong top-1</span>` : `<span class="st-other">—</span>`;
+    else if (state.mode === "filter" && !c.inTop1) st = `<span class="st-other">không thuộc beam 1</span>`;
+    else if (c.support < state.tau - 1e-12) st = `<span class="st-other">dưới τ</span>`;
+    else if (keptKeys.has(c.key)) st = `<span class="st-kept">✓ giữ</span>`;
+    else st = `<span class="st-other">thua do chồng lấn</span>`;
+    const change = `${c.orig.length ? `<del>${esc(c.orig.join(" "))}</del>` : "<i>∅</i>"} → ${c.cor.length ? `<ins>${esc(c.cor.join(" "))}</ins>` : "<i>∅</i>"}`;
+    return `<tr><td class="num">${c.start}–${c.end}</td><td>${change}</td><td class="num"><span class="bar" style="width:${Math.round(c.support * 60)}px"></span>${c.support.toFixed(3)}</td><td class="num">${c.beams.map((k) => k + 1).join(", ")}</td><td>${st}</td></tr>`;
+  }).join("");
+  return `<div class="detail">
+    <div><h3>Nguồn</h3>${esc(srcText(s))}</div>
+    <div><h3>Các beam (điểm z = log-prob chuẩn hoá độ dài, trọng số w${state.weightMode === "softmax" ? ` với T = ${state.temperature}` : " đều nhau"})</h3>
+      <table><thead><tr><th class="num">#</th><th class="num">z</th><th class="num">w</th><th>Giả thuyết</th></tr></thead>
+      <tbody>${beamRows.map((r) => `<tr><td class="num">${r[0]}</td><td class="num">${r[1]}</td><td class="num">${r[2]}</td><td>${r[3]}</td></tr>`).join("")}</tbody></table></div>
+    <div><h3>Edit ứng viên</h3>${prep.candidates.length ? `<table><thead><tr><th class="num">Span</th><th>Thay đổi</th><th class="num">Support</th><th class="num">Beam</th><th>Trạng thái</th></tr></thead><tbody>${candRows}</tbody></table>` : `<span class="st-other">Không beam nào đề xuất edit.</span>`}</div>
+  </div>`;
+}
+
+/* ---------------------------------------------------------------- main render */
+let D = null, current = null;
+
+function compute() {
+  const cfg = { mode: state.mode, tau: state.tau, temperature: state.temperature, weightMode: state.weightMode };
+  const t0 = performance.now();
+  const prep = state.mode === "top1" ? null : prepared(D, state.weightMode, state.temperature);
+  const results = V.runConfig(D.sentences, cfg, prep);
+  const ms = performance.now() - t0;
+  const changed = results.map((r, i) => r.tokens.join(" ") !== srcText(D.sentences[i]));
+  return { cfg, results, changed, ms, name: V.configName(cfg) };
+}
+
+const curveCache = {};
+function curveChanged(mode) {
+  const ck = `${D.name}|${weightKey(state.weightMode, state.temperature)}|${mode}`;
+  if (curveCache[ck]) return curveCache[ck];
+  const prep = prepared(D, state.weightMode, state.temperature);
+  return curveCache[ck] = TAU_GRID.map((tau) => {
+    let n = 0;
+    for (const p of prep) { const r = V.selectEdits(p, tau, mode === "filter"); if (r.kept.length) n++; }
+    return [tau, n];
+  });
+}
+
+function render() {
+  current = compute();
+  const { results, changed, ms, name } = current;
+  const N = D.sentences.length, nChanged = changed.filter(Boolean).length;
+  const nKept = state.mode === "top1" ? D.sentences.reduce((a, s) => a + s.beams[0][1].length, 0)
+                                       : results.reduce((a, r) => a + r.kept.length, 0);
+  const metric = METRICS[state.metric], sc = (D.scores || {})[name], top1Sc = (D.scores || {}).coedit__top1;
+  const val = sc && metric.get(sc), base = top1Sc && metric.get(top1Sc);
+  let scoreHtml = `<div class="val">—</div><div class="note">Cấu hình này chưa từng được chấm.</div>`;
+  if (val != null) {
+    const pr = metric.pr(sc), d = base != null ? (val - base) * 100 : null;
+    const delta = d == null || state.mode === "top1" ? "" :
+      ` <span class="${d > 0 ? "up" : d < 0 ? "down" : ""}">${d > 0 ? "▲ +" : d < 0 ? "▼ " : "± "}${d.toFixed(2)}</span> so với top-1`;
+    scoreHtml = `<div class="val">${(val * 100).toFixed(2)}</div><div class="note">${pr ? `P ${(pr[0] * 100).toFixed(1)} · R ${(pr[1] * 100).toFixed(1)}` : ""}${delta}</div>`;
+  }
+  const hist = D.historical_hashes[name];
+  let badge = `<span class="badge none">Không có file gốc để so</span>`;
+  if (hist) {
+    const [h, lines] = hist;
+    if (lines !== N) badge = `<span class="badge warn" title="File gốc có ${lines} dòng, bộ dữ liệu có ${N} câu">⚠ File gốc bị hỏng (${lines}/${N} dòng)</span>`;
+    else badge = V.fnv1a(V.outputText(results)) === h ? `<span class="badge ok">✓ Trùng khớp output gốc</span>`
+                                                       : `<span class="badge bad">✗ Khác output gốc</span>`;
+  }
+
+  // charts
+  const wk = weightKey(state.weightMode, state.temperature);
+  const ss = scoreSeries(D, state.metric, wk);
+  const wLabel = state.weightMode === "uniform" ? "trọng số đều" : `T = ${state.temperature}`;
+  const c1 = curveChanged("vote"), c2 = curveChanged("filter");
+  const top1Changed = D.sentences.filter((s) => s.top1.join(" ") !== srcText(s)).length;
+
+  $("#app").innerHTML = `
+    <section class="tiles">
+      <div class="card tile"><div class="lbl">Câu bị sửa</div><div class="val">${nChanged}</div><div class="note">/ ${N} câu (${(100 * nChanged / N).toFixed(1)}%)</div></div>
+      <div class="card tile"><div class="lbl">Edit được áp dụng</div><div class="val">${nKept}</div><div class="note">${(nKept / N).toFixed(2)} edit / câu</div></div>
+      <div class="card tile"><div class="lbl">${metric.label} (lịch sử)</div>${scoreHtml}</div>
+      <div class="card tile"><div class="lbl">Kiểm chứng</div><div class="note"><code>${name}</code></div>${badge}<div class="note">tính trong ${ms.toFixed(0)} ms</div></div>
+    </section>
+    <section class="charts">
+      <div class="card">
+        <div class="chart-head"><h2>${metric.label} theo τ</h2></div>
+        <p class="chart-sub">Điểm lịch sử, ${wLabel}. Đường nét đứt: baseline top-1.</p>
+        <div class="legend"><span><i style="border-color:var(--s1)"></i>Voting</span><span><i style="border-color:var(--s2)"></i>Filtering</span><span><i class="dash" style="border-color:var(--ref)"></i>Top-1</span></div>
+        <div class="plot" id="chartScore"></div>
+        ${ss.vote.length + ss.filter.length ? dataTable(["τ", "Voting", "Filtering"], [...new Set([...ss.vote, ...ss.filter].map((p) => p[0]))].sort((a, b) => a - b)
+            .map((t) => [t.toFixed(2), fmt((ss.vote.find((p) => p[0] === t) || [])[1]), fmt((ss.filter.find((p) => p[0] === t) || [])[1])])) : ""}
+      </div>
+      <div class="card">
+        <div class="chart-head"><h2>Số câu bị sửa theo τ</h2></div>
+        <p class="chart-sub">Tính trực tiếp trong trình duyệt, ${wLabel}. τ càng cao, càng ít sửa (precision ↑, recall ↓).</p>
+        <div class="legend"><span><i style="border-color:var(--s1)"></i>Voting</span><span><i style="border-color:var(--s2)"></i>Filtering</span><span><i class="dash" style="border-color:var(--ref)"></i>Top-1</span></div>
+        <div class="plot" id="chartChanged"></div>
+        ${dataTable(["τ", "Voting", "Filtering"], TAU_GRID.map((t, i) => [t.toFixed(2), c1[i][1], c2[i][1]]))}
+      </div>
+    </section>
+    <section class="card">
+      <div class="browser-head">
+        <div class="left"><h2>Từng câu — ${MODE_NAME[state.mode]}</h2>
+          <label><input type="checkbox" id="onlyChanged" ${state.onlyChanged ? "checked" : ""}> chỉ câu bị sửa</label></div>
+        <input type="search" id="q" placeholder="Tìm trong câu…" value="${esc(state.query)}">
+      </div>
+      <div id="list"></div>
+    </section>`;
+
+  lineChart($("#chartScore"), {
+    series: [{ name: "Voting", color: "var(--s1)", points: ss.vote }, { name: "Filtering", color: "var(--s2)", points: ss.filter }]
+              .filter((s) => s.points.length),
+    ref: ss.top1 != null ? { name: "Top-1", y: ss.top1 } : null,
+    xDomain: [0.25, 0.95], xTicks: [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9], xLabel: "τ",
+    xFmt: (v) => v.toFixed(1), yFmt: (v, tip) => v.toFixed(tip ? 2 : 1), markerX: state.mode === "top1" ? null : state.tau,
+  });
+  if (!ss.vote.length && !ss.filter.length) $("#chartScore").innerHTML =
+    `<div class="empty">Chưa có điểm lịch sử cho ${wLabel}.<br>Thử T = 0.1 (có điểm cho mọi bộ dữ liệu).</div>`;
+  lineChart($("#chartChanged"), {
+    series: [{ name: "Voting", color: "var(--s1)", points: c1 }, { name: "Filtering", color: "var(--s2)", points: c2 }],
+    ref: { name: "Top-1", y: top1Changed },
+    xDomain: [0, 1], xTicks: [0, 0.2, 0.4, 0.6, 0.8, 1], xLabel: "τ",
+    xFmt: (v) => v.toFixed(2), yFmt: (v) => Math.round(v).toString(), markerX: state.mode === "top1" ? null : state.tau,
+  });
+
+  $("#onlyChanged").onchange = (e) => { state.onlyChanged = e.target.checked; state.page = 0; renderList(); };
+  $("#q").oninput = (e) => { state.query = e.target.value; state.page = 0; renderList(); };
+  renderList();
+}
+
+function renderList() {
+  const { results, changed } = current, q = state.query.trim().toLowerCase();
+  const ids = [];
+  D.sentences.forEach((s, i) => {
+    if (state.onlyChanged && !changed[i]) return;
+    if (q && !srcText(s).toLowerCase().includes(q) && !results[i].tokens.join(" ").toLowerCase().includes(q)) return;
+    ids.push(i);
+  });
+  const pages = Math.max(1, Math.ceil(ids.length / PAGE));
+  state.page = Math.min(state.page, pages - 1);
+  const slice = ids.slice(state.page * PAGE, (state.page + 1) * PAGE);
+  const html = slice.map((i) => {
+    const s = D.sentences[i], r = results[i];
+    const edits = r.kept || top1Edits(s);
+    const body = renderDiff(s.src, edits);
+    const open = state.open.has(i);
+    return `<div class="sent" data-i="${i}"><div class="row"><span class="idx">${i + 1}</span><span class="txt">${body}</span>
+      <span class="meta">${edits.length} edit ${open ? "▾" : "▸"}</span></div>${open ? sentenceDetail(D, i, r) : ""}</div>`;
+  }).join("") || `<div class="empty">Không có câu nào khớp.</div>`;
+  $("#list").innerHTML = html + `<div class="pager"><button class="btn" id="prev" ${state.page ? "" : "disabled"}>‹ Trước</button>
+    <span>Trang ${state.page + 1} / ${pages} · ${ids.length} câu</span>
+    <button class="btn" id="next" ${state.page < pages - 1 ? "" : "disabled"}>Sau ›</button></div>`;
+  $("#prev").onclick = () => { state.page--; renderList(); };
+  $("#next").onclick = () => { state.page++; renderList(); };
+  $("#list").querySelectorAll(".sent .row").forEach((row) => row.onclick = () => {
+    const i = +row.parentElement.dataset.i;
+    state.open.has(i) ? state.open.delete(i) : state.open.add(i);
+    renderList();
+  });
+}
+
+/* ---------------------------------------------------------------- controls */
+function syncControls() {
+  document.querySelectorAll("#mode button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.v === state.mode));
+  $("#temp").disabled = state.weightMode === "uniform" || state.mode === "top1";
+  $("#wmode").disabled = $("#tau").disabled = state.mode === "top1";
+  $("#tauOut").textContent = state.tau.toFixed(2).replace(/0$/, "");
+  const avail = Object.keys(METRICS).filter((k) => Object.values(D.scores || {}).some((s) => METRICS[k].get(s) != null));
+  if (!avail.includes(state.metric)) state.metric = avail.includes("m2") ? "m2" : avail.includes("gleu") ? "gleu" : "errant";
+  $("#metric").innerHTML = avail.map((k) => `<option value="${k}" ${k === state.metric ? "selected" : ""}>${METRICS[k].label}</option>`).join("");
+}
+async function switchSet(name) {
+  state.set = name; state.page = 0; state.open.clear();
+  $("#app").innerHTML = `<div class="loading">Đang tải ${name}…</div>`;
+  try { D = await loadSet(name); } catch (e) { $("#app").innerHTML = `<div class="loading">${esc(e.message)}</div>`; return; }
+  state.metric = name === "conll14" ? "m2" : name === "jfleg" ? "gleu" : "errant";
+  syncControls(); render();
+}
+let raf = 0;
+const update = () => { syncControls(); cancelAnimationFrame(raf); raf = requestAnimationFrame(render); };
+$("#set").onchange = (e) => switchSet(e.target.value);
+document.querySelectorAll("#mode button").forEach((b) => b.onclick = () => { state.mode = b.dataset.v; update(); });
+$("#wmode").onchange = (e) => { state.weightMode = e.target.value; update(); };
+$("#temp").onchange = (e) => { state.temperature = +e.target.value; update(); };
+$("#tau").oninput = (e) => { state.tau = Math.round(+e.target.value * 100) / 100; update(); };
+$("#metric").onchange = (e) => { state.metric = e.target.value; update(); };
+$("#download").onclick = () => {
+  const blob = new Blob([V.outputText(current.results)], { type: "text/plain;charset=utf-8" });
+  const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: `${state.set}__${current.name}.txt` });
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+switchSet(state.set);
+</script>
+</body>
+</html>

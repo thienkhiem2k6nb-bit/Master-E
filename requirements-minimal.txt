@@ -1,0 +1,5 @@
+# For reproducing tokenization/alignment used in the original experiments
+spacy==3.8.16
+# Install the English spaCy model (README command)
+pytest>=8,<10
+# For generating NEW n-best lists, additionally install torch and transformers as pinned in original requirements.lock.txt

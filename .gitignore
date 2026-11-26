@@ -1,0 +1,12 @@
+# Python environment / caches
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# IDE
+.idea/
+
+# Local experiment runs (regenerate with run_voting_filtering.py --out-dir runs/<set>)
+runs/
+results/logs/

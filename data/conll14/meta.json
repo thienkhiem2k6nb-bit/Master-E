@@ -1,0 +1,8 @@
+{
+  "name": "CoNLL-2014 shared task test set",
+  "n_sentences": 1312,
+  "annotators": 2,
+  "source": "https://www.comp.nus.edu.sg/~nlp/conll14st.html (conll14st-test-data.tar.gz, official-2014.combined.m2)",
+  "citation": "Ng et al. 2014, The CoNLL-2014 Shared Task on Grammatical Error Correction",
+  "role": "TEST (no tuning)"
+}
